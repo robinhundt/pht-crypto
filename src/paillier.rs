@@ -8,10 +8,9 @@ use std::convert::TryInto;
 use rug::ops::{Pow, NegAssign, DivRounding, RemRounding};
 use rug::integer::IsPrime;
 use std::ops::Neg;
-use gmp_mpfr_sys::gmp::mpz_tdiv_q_ui;
 
 
-pub struct AuthServer {
+pub struct KeyShare {
     /// Server index of this instance
     i: u32,
     /// Polynomial evaluation at i
@@ -94,7 +93,7 @@ pub fn generate_key_pair(bits: usize, decryption_servers: u32, throphold: u32) -
     Ok((pk, sk))
 }
 
-impl AuthServer {
+impl KeyShare {
     pub fn new(si: Integer, i: u32) -> Self {
         Self {
             // TODO i is not used
@@ -136,7 +135,7 @@ impl PublicKey {
         cipher.pow_mod_mut(plain, &self.n2).unwrap();
     }
 
-    pub fn share_decrypt(&self, auth_server: &AuthServer, cipher: Integer) -> Integer {
+    pub fn share_decrypt(&self, auth_server: &KeyShare, cipher: Integer) -> Integer {
         let exponent = auth_server.si.clone() * &self.delta * 2;
         cipher.pow_mod(&exponent, &self.n2).unwrap()
     }
@@ -218,7 +217,7 @@ fn dlog_s(mut op: Integer, n: &Integer) -> Integer {
 
 #[cfg(test)]
 mod tests {
-    use crate::pcs_t::{generate_key_pair, Polynomial, AuthServer};
+    use crate::paillier::{generate_key_pair, Polynomial, KeyShare};
     use rand::thread_rng;
     use rug::rand::RandState;
     use rug::Integer;
@@ -229,7 +228,7 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(5.into(), &mut rand);
         let poly_eval = Polynomial::new(&sk, &mut rand).compute(&sk, 0);
-        let auth_server = AuthServer::new(poly_eval, 0);
+        let auth_server = KeyShare::new(poly_eval, 0);
         let share_decrypt = pk.share_decrypt(&auth_server, c);
         let combined = pk.share_combine(&[share_decrypt]).unwrap();
         assert_eq!(combined, 5);
@@ -243,7 +242,7 @@ mod tests {
         let poly = Polynomial::new(&sk, &mut rand);
         let auth_servers: Vec<_> = (0..3).map(|idx| {
             let poly_eval = poly.compute(&sk, idx);
-            AuthServer::new(poly_eval, idx)
+            KeyShare::new(poly_eval, idx)
         }).collect();
 
         let mut shares: Vec<_> = auth_servers.iter().map(|au| {
@@ -261,7 +260,7 @@ mod tests {
         let poly = Polynomial::new(&sk, &mut rand);
         let auth_servers: Vec<_> = (0..2).map(|idx| {
             let poly_eval = poly.compute(&sk, idx);
-            AuthServer::new(poly_eval, idx)
+            KeyShare::new(poly_eval, idx)
         }).collect();
 
         let mut shares: Vec<_> = auth_servers.iter().map(|au| {

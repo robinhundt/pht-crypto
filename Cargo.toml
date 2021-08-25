@@ -10,7 +10,6 @@ anyhow = "1.0.43"
 rug = { version = "1.13.0" , default-features = false, features = ["integer", "rand"]}
 glass_pumpkin = "1.1.0"
 rand = "0.8.4"
-gmp-mpfr-sys = "1.4.6"
 
 [profile.dev.package.glass_pumpkin]
 opt-level = 3

@@ -6,7 +6,7 @@ use rug::rand::MutRandState;
 
 use crate::rand::{generate_safe_prime, random_in_mult_group};
 
-pub mod pcs_t;
+pub mod paillier;
 mod rand;
 mod util;
 
