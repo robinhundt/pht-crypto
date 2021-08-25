@@ -17,6 +17,7 @@ pub struct KeyShare {
     si: Integer
 }
 
+#[derive(Debug, Clone)]
 pub struct PublicKey {
     /// The number of servers req to successfully decrypt
     w: u32,
@@ -29,7 +30,7 @@ pub struct PublicKey {
     /// Precomputation: n^2
     n2: Integer,
     /// Precomputation: l!
-    delta: Integer
+    delta: Integer,
 }
 
 pub struct PrivateKey {
