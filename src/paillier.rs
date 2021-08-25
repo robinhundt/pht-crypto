@@ -1,6 +1,7 @@
 use rug::{Complete, Integer, Assign};
 use rug::rand::MutRandState;
 use anyhow::{Result, anyhow};
+use serde::{Serialize, Deserialize};
 
 use crate::rand::{generate_safe_prime, random_in_mult_group};
 use crate::util;
@@ -10,14 +11,15 @@ use rug::integer::IsPrime;
 use std::ops::Neg;
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyShare {
     /// Server index of this instance
     i: u32,
     /// Polynomial evaluation at i
-    si: Integer
+    si: Integer,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct PublicKey {
     /// The number of servers req to successfully decrypt
     w: u32,
@@ -53,7 +55,7 @@ pub struct Polynomial {
     coefficients: Vec<Integer>,
 }
 
-pub fn generate_key_pair(bits: usize, decryption_servers: u32, throphold: u32) -> Result<(PublicKey, PrivateKey)> {
+pub fn generate_key_pair(bits: usize, decryption_servers: u32, threshold: u32) -> Result<(PublicKey, PrivateKey)> {
     let (mut t1, mut t2, mut t3, t4): (Integer, Integer, Integer, Integer) = loop {
         let t1 = generate_safe_prime(bits)?;
         let t3 = generate_safe_prime(bits)?;
@@ -74,7 +76,7 @@ pub fn generate_key_pair(bits: usize, decryption_servers: u32, throphold: u32) -
     let delta = Integer::factorial(decryption_servers).complete();
 
     let pk = PublicKey {
-        w: throphold,
+        w: threshold,
         l: decryption_servers,
         n: n.clone(),
         g,
@@ -83,7 +85,7 @@ pub fn generate_key_pair(bits: usize, decryption_servers: u32, throphold: u32) -
     };
 
     let sk = PrivateKey {
-        w: throphold,
+        w: threshold,
         l: decryption_servers,
         d,
         n,
