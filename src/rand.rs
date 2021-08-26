@@ -1,11 +1,11 @@
-use rand::{CryptoRng, thread_rng};
-use rug::Integer;
 use anyhow::Result;
+use glass_pumpkin::prime::strong_check;
 use glass_pumpkin::safe_prime;
+use rand::{thread_rng};
 use rug::integer::Order;
 use rug::rand::MutRandState;
 use rug::Complete;
-use glass_pumpkin::prime::strong_check;
+use rug::Integer;
 
 pub(crate) fn generate_safe_prime(bits: usize) -> Result<Integer> {
     let sp = safe_prime::from_rng(bits, &mut thread_rng())?;
@@ -25,4 +25,3 @@ pub(crate) fn random_in_mult_group(op: &Integer, rand: &mut dyn MutRandState) ->
         }
     }
 }
-

@@ -1,14 +1,13 @@
-use rug::{Complete, Integer, Assign};
+use anyhow::{anyhow, Result};
 use rug::rand::MutRandState;
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+use rug::{Assign, Complete, Integer};
+use serde::{Deserialize, Serialize};
 
 use crate::rand::{generate_safe_prime, random_in_mult_group};
 use crate::util;
+
+use rug::ops::{NegAssign};
 use std::convert::TryInto;
-use rug::ops::{Pow, NegAssign, DivRounding, RemRounding};
-use rug::integer::IsPrime;
-use std::ops::Neg;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +46,7 @@ pub struct PrivateKey {
     /// Precomputation: n^2
     n2: Integer,
     /// Precomputation: n * m
-    nm: Integer
+    nm: Integer,
 }
 
 #[derive(Debug)]
@@ -55,12 +54,16 @@ pub struct Polynomial {
     coefficients: Vec<Integer>,
 }
 
-pub fn generate_key_pair(bits: usize, decryption_servers: u32, threshold: u32) -> Result<(PublicKey, PrivateKey)> {
+pub fn generate_key_pair(
+    bits: usize,
+    decryption_servers: u32,
+    threshold: u32,
+) -> Result<(PublicKey, PrivateKey)> {
     let (mut t1, mut t2, mut t3, t4): (Integer, Integer, Integer, Integer) = loop {
         let t1 = generate_safe_prime(bits)?;
         let t3 = generate_safe_prime(bits)?;
         if t1 != t3 {
-            let t2 = (t1.clone() - 1) / 2 ;
+            let t2 = (t1.clone() - 1) / 2;
             let t4 = (t3.clone() - 1) / 2;
             break (t1, t2, t3, t4);
         }
@@ -81,7 +84,7 @@ pub fn generate_key_pair(bits: usize, decryption_servers: u32, threshold: u32) -
         n: n.clone(),
         g,
         n2: n2.clone(),
-        delta
+        delta,
     };
 
     let sk = PrivateKey {
@@ -90,7 +93,7 @@ pub fn generate_key_pair(bits: usize, decryption_servers: u32, threshold: u32) -
         d,
         n,
         n2,
-        nm
+        nm,
     };
 
     Ok((pk, sk))
@@ -100,8 +103,8 @@ impl KeyShare {
     pub fn new(si: Integer, i: u32) -> Self {
         Self {
             // TODO i is not used
-            i: i+1, // Input is assumed to be 0-indexed (from array)
-            si
+            i: i + 1, // Input is assumed to be 0-indexed (from array)
+            si,
         }
     }
 }
@@ -144,22 +147,25 @@ impl PublicKey {
     }
 
     pub fn share_combine(&self, shares: &[Integer]) -> Result<Integer> {
-        assert_eq!(shares.len(), self.l as usize,
-                   "shares must have same length as decryption servers. Zero entries are ignored");
+        assert_eq!(
+            shares.len(),
+            self.l as usize,
+            "shares must have same length as decryption servers. Zero entries are ignored"
+        );
         let mut rop = Integer::from(1);
         let mut t1;
         let mut t2;
         for i in 0..self.l as usize {
-            if shares[i] == 0 { continue }
+            if shares[i] == 0 {
+                continue;
+            }
             t1 = self.delta.clone();
             for j in 0..(self.l as i64) {
-                if i == j as usize || shares[j as usize] == 0 { continue }
-                let v = (j - i as i64);
-                t1 = if v < 0 {
-                    t1 /  (v * -1)
-                } else {
-                    t1 / v
-                };
+                if i == j as usize || shares[j as usize] == 0 {
+                    continue;
+                }
+                let v = j - i as i64;
+                t1 = if v < 0 { t1 / (v * -1) } else { t1 / v };
                 if v < 0 {
                     t1.neg_assign()
                 }
@@ -184,7 +190,6 @@ impl PublicKey {
         rop %= &self.n;
         Ok(rop)
     }
-
 }
 
 impl Polynomial {
@@ -194,9 +199,7 @@ impl Polynomial {
         for coeff in coefficients.iter_mut().skip(1) {
             coeff.random_below_mut(rand);
         }
-        Self {
-            coefficients
-        }
+        Self { coefficients }
     }
 
     pub fn compute(&self, sk: &PrivateKey, x: u32) -> Integer {
@@ -211,7 +214,6 @@ impl Polynomial {
     }
 }
 
-
 fn dlog_s(mut op: Integer, n: &Integer) -> Integer {
     op -= 1;
     op.div_exact_mut(n);
@@ -220,8 +222,8 @@ fn dlog_s(mut op: Integer, n: &Integer) -> Integer {
 
 #[cfg(test)]
 mod tests {
-    use crate::paillier::{generate_key_pair, Polynomial, KeyShare};
-    use rand::thread_rng;
+    use crate::paillier::{generate_key_pair, KeyShare, Polynomial};
+    
     use rug::rand::RandState;
     use rug::Integer;
 
@@ -243,14 +245,17 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..3).map(|idx| {
-            let poly_eval = poly.compute(&sk, idx);
-            KeyShare::new(poly_eval, idx)
-        }).collect();
+        let auth_servers: Vec<_> = (0..3)
+            .map(|idx| {
+                let poly_eval = poly.compute(&sk, idx);
+                KeyShare::new(poly_eval, idx)
+            })
+            .collect();
 
-        let mut shares: Vec<_> = auth_servers.iter().map(|au| {
-            pk.share_decrypt(au, c.clone())
-        }).collect();
+        let shares: Vec<_> = auth_servers
+            .iter()
+            .map(|au| pk.share_decrypt(au, c.clone()))
+            .collect();
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
     }
@@ -261,18 +266,19 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..2).map(|idx| {
-            let poly_eval = poly.compute(&sk, idx);
-            KeyShare::new(poly_eval, idx)
-        }).collect();
+        let auth_servers: Vec<_> = (0..2)
+            .map(|idx| {
+                let poly_eval = poly.compute(&sk, idx);
+                KeyShare::new(poly_eval, idx)
+            })
+            .collect();
 
-        let mut shares: Vec<_> = auth_servers.iter().map(|au| {
-            pk.share_decrypt(au, c.clone())
-        }).collect();
+        let mut shares: Vec<_> = auth_servers
+            .iter()
+            .map(|au| pk.share_decrypt(au, c.clone()))
+            .collect();
         shares.push(Integer::new());
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
     }
-
-
 }
