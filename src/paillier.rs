@@ -6,16 +6,20 @@ use serde::{Deserialize, Serialize};
 use crate::rand::{generate_safe_prime, random_in_mult_group};
 use crate::util;
 
-use rug::ops::{NegAssign};
+use rug::ops::NegAssign;
 use std::convert::TryInto;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyShare {
-    /// Server index of this instance
+pub struct PrivateKeyShare {
     i: u32,
     /// Polynomial evaluation at i
     si: Integer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartialDecryption {
+    share: Integer,
+    i: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -99,13 +103,9 @@ pub fn generate_key_pair(
     Ok((pk, sk))
 }
 
-impl KeyShare {
+impl PrivateKeyShare {
     pub fn new(si: Integer, i: u32) -> Self {
-        Self {
-            // TODO i is not used
-            i: i + 1, // Input is assumed to be 0-indexed (from array)
-            si,
-        }
+        Self { i, si }
     }
 }
 
@@ -141,12 +141,9 @@ impl PublicKey {
         cipher.pow_mod_mut(plain, &self.n2).unwrap();
     }
 
-    pub fn share_decrypt(&self, auth_server: &KeyShare, cipher: Integer) -> Integer {
-        let exponent = auth_server.si.clone() * &self.delta * 2;
-        cipher.pow_mod(&exponent, &self.n2).unwrap()
-    }
-
-    pub fn share_combine(&self, shares: &[Integer]) -> Result<Integer> {
+    /// TODO handle array of shares that is w long and not l
+    /// UTD paillier implementation can be used as reference
+    pub fn share_combine(&self, shares: &[PartialDecryption]) -> Result<Integer> {
         assert_eq!(
             shares.len(),
             self.l as usize,
@@ -156,12 +153,12 @@ impl PublicKey {
         let mut t1;
         let mut t2;
         for i in 0..self.l as usize {
-            if shares[i] == 0 {
+            if shares[i].share == 0 {
                 continue;
             }
             t1 = self.delta.clone();
             for j in 0..(self.l as i64) {
-                if i == j as usize || shares[j as usize] == 0 {
+                if i == j as usize || shares[j as usize].share == 0 {
                     continue;
                 }
                 let v = j - i as i64;
@@ -173,7 +170,7 @@ impl PublicKey {
             }
             t2 = t1.abs_ref().complete();
             t2 *= 2;
-            t2 = Integer::from(shares[i].pow_mod_ref(&t2, &self.n2).unwrap());
+            t2 = Integer::from(shares[i].share.pow_mod_ref(&t2, &self.n2).unwrap());
             if t1.signum() < 0 && t2.invert_mut(&self.n2).is_err() {
                 return Err(anyhow!("No inverse"));
             }
@@ -202,7 +199,7 @@ impl Polynomial {
         Self { coefficients }
     }
 
-    pub fn compute(&self, sk: &PrivateKey, x: u32) -> Integer {
+    pub fn compute(&self, sk: &PrivateKey, x: u32) -> PrivateKeyShare {
         let mut rop = self.coefficients[0].clone();
         for (i, coeff) in self.coefficients.iter().enumerate().skip(1) {
             let mut tmp = Integer::u_pow_u(x + 1, i.try_into().unwrap()).complete();
@@ -210,7 +207,15 @@ impl Polynomial {
             rop += tmp;
             rop %= &sk.nm;
         }
-        rop
+        PrivateKeyShare { i: x, si: rop }
+    }
+}
+
+impl PrivateKeyShare {
+    pub fn share_decrypt(&self, pk: &PublicKey, cipher: Integer) -> PartialDecryption {
+        let exponent = self.si.clone() * &pk.delta * 2;
+        let share = cipher.pow_mod(&exponent, &pk.n2).unwrap();
+        PartialDecryption { share, i: self.i }
     }
 }
 
@@ -222,8 +227,8 @@ fn dlog_s(mut op: Integer, n: &Integer) -> Integer {
 
 #[cfg(test)]
 mod tests {
-    use crate::paillier::{generate_key_pair, KeyShare, Polynomial};
-    
+    use crate::paillier::{generate_key_pair, PartialDecryption, Polynomial};
+
     use rug::rand::RandState;
     use rug::Integer;
 
@@ -232,9 +237,8 @@ mod tests {
         let (pk, sk) = generate_key_pair(128, 1, 1).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(5.into(), &mut rand);
-        let poly_eval = Polynomial::new(&sk, &mut rand).compute(&sk, 0);
-        let auth_server = KeyShare::new(poly_eval, 0);
-        let share_decrypt = pk.share_decrypt(&auth_server, c);
+        let key_share = Polynomial::new(&sk, &mut rand).compute(&sk, 0);
+        let share_decrypt = key_share.share_decrypt(&pk, c);
         let combined = pk.share_combine(&[share_decrypt]).unwrap();
         assert_eq!(combined, 5);
     }
@@ -245,16 +249,11 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..3)
-            .map(|idx| {
-                let poly_eval = poly.compute(&sk, idx);
-                KeyShare::new(poly_eval, idx)
-            })
-            .collect();
+        let auth_servers: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
 
         let shares: Vec<_> = auth_servers
             .iter()
-            .map(|au| pk.share_decrypt(au, c.clone()))
+            .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
             .collect();
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
@@ -266,18 +265,16 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..2)
-            .map(|idx| {
-                let poly_eval = poly.compute(&sk, idx);
-                KeyShare::new(poly_eval, idx)
-            })
-            .collect();
+        let auth_servers: Vec<_> = (0..2).map(|idx| poly.compute(&sk, idx)).collect();
 
         let mut shares: Vec<_> = auth_servers
             .iter()
-            .map(|au| pk.share_decrypt(au, c.clone()))
+            .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
             .collect();
-        shares.push(Integer::new());
+        shares.push(PartialDecryption {
+            share: Integer::new(),
+            i: 2,
+        });
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
     }

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use glass_pumpkin::prime::strong_check;
 use glass_pumpkin::safe_prime;
-use rand::{thread_rng};
+use rand::thread_rng;
 use rug::integer::Order;
 use rug::rand::MutRandState;
 use rug::Complete;

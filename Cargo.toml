@@ -1,8 +1,14 @@
 [package]
 name = "threshold-crypto"
-version = "0.1.0"
+version = "0.1.0-alpha"
 edition = "2018"
 resolver = "2"
+authors = ["Robin Hundt <robin-codes@posteo.de>"]
+description = "Threshold homomorphic encryption, currently threshold paillier"
+repository = "https://github.com/robinhundt/threshold-crypto"
+license = "LGPL-3.0+"
+categories = ["cryptography"]
+keywords = ["paillier", "threshold-paillier", "homomorphic"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

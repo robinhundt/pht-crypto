@@ -1,19 +1,4 @@
-
-
-
-
-
-
-
-
+#[doc = include_str!("../README.md")]
 pub mod paillier;
 mod rand;
 mod util;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
