@@ -1,4 +1,4 @@
-# Threshold-Crypto
+# Partially Homomorphic Threshold Cryptography
 This library implements partially homomorphic threshold encryption. Currently only a  threshold variant of paillier is implemented.
 
 ## WARNING!
