@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Context};
 use rug::rand::MutRandState;
 use rug::{Assign, Complete, Integer};
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,16 @@ use crate::util;
 
 use rug::ops::NegAssign;
 use std::convert::TryInto;
+use std::thread;
+
+pub struct Ciphertext<'a> {
+    pk: &'a PublicKey,
+    val: Integer,
+}
+
+pub struct Plaintext {
+    val: Integer
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateKeyShare {
@@ -18,8 +28,8 @@ pub struct PrivateKeyShare {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialDecryption {
-    share: Integer,
-    i: u32,
+    val: Integer,
+    id: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -28,14 +38,16 @@ pub struct PublicKey {
     w: u32,
     /// The number of decryption servers in total
     l: u32,
-    /// Modulus of the key. n = p * q
+    /// Modulus of the key. $n = p * q$
     n: Integer,
     /// Precomputation: n + 1
     g: Integer,
-    /// Precomputation: n^2
+    /// Precomputation: $n^2$
     n2: Integer,
     /// Precomputation: l!
     delta: Integer,
+    /// Precomputation $$(4*delta^2)^{-1} mod n$$
+    combine_shares_constant: Integer
 }
 
 pub struct PrivateKey {
@@ -64,8 +76,9 @@ pub fn generate_key_pair(
     threshold: u32,
 ) -> Result<(PublicKey, PrivateKey)> {
     let (mut t1, mut t2, mut t3, t4): (Integer, Integer, Integer, Integer) = loop {
-        let t1 = generate_safe_prime(bits)?;
+        let t1 = thread::spawn(move || generate_safe_prime(bits));
         let t3 = generate_safe_prime(bits)?;
+        let t1 = t1.join().expect("joining thread")?;
         if t1 != t3 {
             let t2 = (t1.clone() - 1) / 2;
             let t4 = (t3.clone() - 1) / 2;
@@ -81,6 +94,11 @@ pub fn generate_key_pair(
     t2.assign(0);
     let d = util::crt2(&t1, &n, &t2, &t3);
     let delta = Integer::factorial(decryption_servers).complete();
+    let mut combine_shares_constant = delta.clone().square();
+    combine_shares_constant *= 4;
+    if combine_shares_constant.invert_mut(&n).is_err() {
+        return Err(anyhow!("No inverse"));
+    }
 
     let pk = PublicKey {
         w: threshold,
@@ -89,6 +107,7 @@ pub fn generate_key_pair(
         g,
         n2: n2.clone(),
         delta,
+        combine_shares_constant
     };
 
     let sk = PrivateKey {
@@ -105,7 +124,8 @@ pub fn generate_key_pair(
 
 impl PrivateKeyShare {
     pub fn new(si: Integer, i: u32) -> Self {
-        Self { i, si }
+        // i + 1 needed for zero indexed servers
+        Self { i: i + 1, si }
     }
 }
 
@@ -141,50 +161,22 @@ impl PublicKey {
         cipher.pow_mod_mut(plain, &self.n2).unwrap();
     }
 
-    /// TODO handle array of shares that is w long and not l
-    /// UTD paillier implementation can be used as reference
     pub fn share_combine(&self, shares: &[PartialDecryption]) -> Result<Integer> {
-        assert_eq!(
-            shares.len(),
-            self.l as usize,
-            "shares must have same length as decryption servers. Zero entries are ignored"
-        );
-        let mut rop = Integer::from(1);
-        let mut t1;
-        let mut t2;
-        for i in 0..self.l as usize {
-            if shares[i].share == 0 {
-                continue;
+        let mut cprime = Integer::from(1);
+        for i in 0..self.w as usize {
+            let mut lambda = self.delta.clone();
+            for j in 0..self.w as usize {
+                if i == j { continue; }
+                assert_ne!(shares[i].id, shares[j].id, "`share_combine` must be passed unique shares");
+                let v = Integer::from(shares[i].id as i64 - shares[j].id as i64);
+                lambda = lambda * Integer::from(-(shares[j].id as i64)) / v;
             }
-            t1 = self.delta.clone();
-            for j in 0..(self.l as i64) {
-                if i == j as usize || shares[j as usize].share == 0 {
-                    continue;
-                }
-                let v = j - i as i64;
-                t1 = if v < 0 { t1 / (v * -1) } else { t1 / v };
-                if v < 0 {
-                    t1.neg_assign()
-                }
-                t1 *= j + 1;
-            }
-            t2 = t1.abs_ref().complete();
-            t2 *= 2;
-            t2 = Integer::from(shares[i].share.pow_mod_ref(&t2, &self.n2).unwrap());
-            if t1.signum() < 0 && t2.invert_mut(&self.n2).is_err() {
-                return Err(anyhow!("No inverse"));
-            }
-            rop *= t2;
-            rop %= &self.n2;
+            let lambda2 = lambda.clone() * 2;
+            cprime *= shares[i].val.clone().pow_mod(&lambda2, &self.n2).unwrap();
+            cprime %= &self.n2;
         }
-        rop = dlog_s(rop, &self.n);
-        t1 = self.delta.clone().square();
-        t1 *= 4;
-        if t1.invert_mut(&self.n).is_err() {
-            return Err(anyhow!("No inverse"));
-        }
-        rop *= t1;
-        rop %= &self.n;
+        let t = (cprime - 1) / &self.n;
+        let rop = t * &self.combine_shares_constant % &self.n;
         Ok(rop)
     }
 }
@@ -207,7 +199,7 @@ impl Polynomial {
             rop += tmp;
             rop %= &sk.nm;
         }
-        PrivateKeyShare { i: x, si: rop }
+        PrivateKeyShare::new(rop, x)
     }
 }
 
@@ -215,7 +207,7 @@ impl PrivateKeyShare {
     pub fn share_decrypt(&self, pk: &PublicKey, cipher: Integer) -> PartialDecryption {
         let exponent = self.si.clone() * &pk.delta * 2;
         let share = cipher.pow_mod(&exponent, &pk.n2).unwrap();
-        PartialDecryption { share, i: self.i }
+        PartialDecryption { val: share, id: self.i }
     }
 }
 
@@ -231,6 +223,9 @@ mod tests {
 
     use rug::rand::RandState;
     use rug::Integer;
+    use rand::seq::SliceRandom;
+    use rand::rngs::{OsRng, ThreadRng};
+    use rand::thread_rng;
 
     #[test]
     fn test_single_server() {
@@ -249,9 +244,9 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
+        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
 
-        let shares: Vec<_> = auth_servers
+        let shares: Vec<_> = key_shares
             .iter()
             .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
             .collect();
@@ -260,21 +255,34 @@ mod tests {
     }
 
     #[test]
+    fn test_shuffled_shares() {
+        let (pk, sk) = generate_key_pair(128, 3, 3).unwrap();
+        let mut rand = RandState::new();
+        let c = pk.encrypt(10.into(), &mut rand);
+        let poly = Polynomial::new(&sk, &mut rand);
+        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
+        let mut shares: Vec<_> = key_shares
+            .iter()
+            .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
+            .collect();
+        shares.shuffle(&mut thread_rng());
+        let combined = pk.share_combine(&shares).unwrap();
+        assert_eq!(combined, 10);
+    }
+
+
+    #[test]
     fn test_multiple_server_lower_threshold() {
         let (pk, sk) = generate_key_pair(128, 3, 2).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let auth_servers: Vec<_> = (0..2).map(|idx| poly.compute(&sk, idx)).collect();
+        let key_shares: Vec<_> = (0..2).map(|idx| poly.compute(&sk, idx)).collect();
 
-        let mut shares: Vec<_> = auth_servers
+        let mut shares: Vec<_> = key_shares
             .iter()
             .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
             .collect();
-        shares.push(PartialDecryption {
-            share: Integer::new(),
-            i: 2,
-        });
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
     }
