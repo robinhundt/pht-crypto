@@ -1,15 +1,18 @@
 use anyhow::Result;
-use rand::thread_rng;
+
 use rug::integer::Order;
 use rug::rand::MutRandState;
 use rug::Complete;
 use rug::Integer;
 use openssl::bn::BigNum;
 
-pub(crate) fn generate_safe_prime(bits: usize) -> Result<Integer> {
+pub(crate) fn generate_safe_prime(bits: usize) -> Result<(Integer, Integer)> {
     let mut sp = BigNum::new()?;
-    sp.generate_prime(bits as i32, true, None, None);
-    Ok(Integer::from_digits(&sp.to_vec(), Order::MsfBe))
+    sp.generate_prime(bits as i32, true, None, None)?;
+    let p = Integer::from_digits(&sp.to_vec(), Order::MsfBe);
+    // (p - 1) / 2 <=> p >> 1 because primes are odd
+    let p1 = p.clone() >> 1;
+    Ok((p, p1))
 }
 
 /// Generate a random value that is in Z_(op)^*. This simply random chooses

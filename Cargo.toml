@@ -18,7 +18,7 @@ rand = "0.8.4"
 serde = { version = "1.0.129" , features = ["derive"]}
 openssl = "0.10.36"
 
-[profile.dev.package.glass_pumpkin]
+[profile.dev.package.openssl]
 opt-level = 3
 
 [dev-dependencies]

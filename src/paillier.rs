@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Result};
 use rug::rand::MutRandState;
 use rug::{Assign, Complete, Integer};
 use serde::{Deserialize, Serialize};
@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::rand::{generate_safe_prime, random_in_mult_group};
 use crate::util;
 
-use rug::ops::NegAssign;
+
 use std::convert::TryInto;
 use std::thread;
+
 
 pub struct Ciphertext<'a> {
     pk: &'a PublicKey,
@@ -38,15 +39,15 @@ pub struct PublicKey {
     w: u32,
     /// The number of decryption servers in total
     l: u32,
-    /// Modulus of the key. $n = p * q$
+    /// Modulus of the key. n = p * q
     n: Integer,
     /// Precomputation: n + 1
     g: Integer,
-    /// Precomputation: $n^2$
+    /// Precomputation: n^2
     n2: Integer,
     /// Precomputation: l!
     delta: Integer,
-    /// Precomputation $$(4*delta^2)^{-1} mod n$$
+    /// Precomputation (4*delta^2)^{-1} mod n
     combine_shares_constant: Integer
 }
 
@@ -65,8 +66,8 @@ pub struct PrivateKey {
     nm: Integer,
 }
 
-#[derive(Debug)]
-pub struct Polynomial {
+pub struct Polynomial<'a> {
+    sk: &'a PrivateKey,
     coefficients: Vec<Integer>,
 }
 
@@ -75,13 +76,12 @@ pub fn generate_key_pair(
     decryption_servers: u32,
     threshold: u32,
 ) -> Result<(PublicKey, PrivateKey)> {
-    let (mut t1, mut t2, mut t3, t4): (Integer, Integer, Integer, Integer) = loop {
-        let t1 = thread::spawn(move || generate_safe_prime(bits));
-        let t3 = generate_safe_prime(bits)?;
-        let t1 = t1.join().expect("joining thread")?;
+    let bits = bits / 2;
+    let (mut t1, mut t2, mut t3, t4) = loop {
+        let handle = thread::spawn(move || generate_safe_prime(bits));
+        let (t3, t4) = generate_safe_prime(bits)?;
+        let (t1, t2) = handle.join().expect("joining thread")?;
         if t1 != t3 {
-            let t2 = (t1.clone() - 1) / 2;
-            let t4 = (t3.clone() - 1) / 2;
             break (t1, t2, t3, t4);
         }
     };
@@ -181,23 +181,23 @@ impl PublicKey {
     }
 }
 
-impl Polynomial {
-    pub fn new(sk: &PrivateKey, rand: &mut dyn MutRandState) -> Self {
+impl<'a> Polynomial<'a> {
+    pub fn new<'b>(sk: &'a PrivateKey, rand: &'b mut dyn MutRandState) -> Self {
         let mut coefficients = vec![sk.nm.clone(); sk.w as usize];
         coefficients[0] = sk.d.clone();
         for coeff in coefficients.iter_mut().skip(1) {
             coeff.random_below_mut(rand);
         }
-        Self { coefficients }
+        Self { sk, coefficients }
     }
 
-    pub fn compute(&self, sk: &PrivateKey, x: u32) -> PrivateKeyShare {
+    pub fn compute(&self, x: u32) -> PrivateKeyShare {
         let mut rop = self.coefficients[0].clone();
         for (i, coeff) in self.coefficients.iter().enumerate().skip(1) {
             let mut tmp = Integer::u_pow_u(x + 1, i.try_into().unwrap()).complete();
             tmp *= coeff;
             rop += tmp;
-            rop %= &sk.nm;
+            rop %= &self.sk.nm;
         }
         PrivateKeyShare::new(rop, x)
     }
@@ -211,20 +211,14 @@ impl PrivateKeyShare {
     }
 }
 
-fn dlog_s(mut op: Integer, n: &Integer) -> Integer {
-    op -= 1;
-    op.div_exact_mut(n);
-    op % n
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::paillier::{generate_key_pair, PartialDecryption, Polynomial};
+    use crate::paillier::{generate_key_pair, Polynomial};
 
     use rug::rand::RandState;
-    use rug::Integer;
+    
     use rand::seq::SliceRandom;
-    use rand::rngs::{OsRng, ThreadRng};
+    
     use rand::thread_rng;
 
     #[test]
@@ -232,7 +226,7 @@ mod tests {
         let (pk, sk) = generate_key_pair(128, 1, 1).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(5.into(), &mut rand);
-        let key_share = Polynomial::new(&sk, &mut rand).compute(&sk, 0);
+        let key_share = Polynomial::new(&sk, &mut rand).compute(0);
         let share_decrypt = key_share.share_decrypt(&pk, c);
         let combined = pk.share_combine(&[share_decrypt]).unwrap();
         assert_eq!(combined, 5);
@@ -244,7 +238,7 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
+        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(idx)).collect();
 
         let shares: Vec<_> = key_shares
             .iter()
@@ -260,7 +254,7 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(&sk, idx)).collect();
+        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(idx)).collect();
         let mut shares: Vec<_> = key_shares
             .iter()
             .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
@@ -277,9 +271,9 @@ mod tests {
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
         let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..2).map(|idx| poly.compute(&sk, idx)).collect();
+        let key_shares: Vec<_> = (0..2).map(|idx| poly.compute(idx)).collect();
 
-        let mut shares: Vec<_> = key_shares
+        let shares: Vec<_> = key_shares
             .iter()
             .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
             .collect();
