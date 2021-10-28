@@ -1,5 +1,5 @@
 use crate::rand::{generate_safe_prime, random_in_mult_group};
-use crate::util;
+use crate::{util, Ciphertext, Plaintext};
 use anyhow::{anyhow, Result};
 use rug::rand::MutRandState;
 use rug::{Assign, Complete, Integer};
@@ -7,16 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use std::convert::TryInto;
 use std::thread;
-
-// WIP
-// pub struct Ciphertext<'a> {
-//     pk: &'a PublicKey,
-//     val: Integer,
-// }
-//
-// pub struct Plaintext {
-//     val: Integer,
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateKeyShare {
@@ -140,7 +130,8 @@ impl PrivateKeyShare {
 }
 
 impl PublicKey {
-    pub fn encrypt(&self, m: Integer, rand: &mut dyn MutRandState) -> Integer {
+    pub fn encrypt(&self, m: Plaintext, rand: &mut dyn MutRandState) -> Ciphertext {
+        let m = m.into();
         // TODO is random_in_mult_group needed? Other implementations just choose 0 < r < n
         // https://crypto.stackexchange.com/questions/62371/paillier-encryption-problem-when-q-or-p-divides-r
         let mut r = random_in_mult_group(&self.n, rand);
@@ -148,32 +139,37 @@ impl PublicKey {
         r.pow_mod_mut(&self.n, &self.n2).unwrap();
         rop *= r;
         rop %= &self.n2;
-        rop
+        rop.into()
     }
 
-    pub fn reencrypt(&self, cipher: &mut Integer, rand: &mut dyn MutRandState) {
+    pub fn reencrypt(&self, cipher: &mut Ciphertext, rand: &mut dyn MutRandState) {
+        let cipher = cipher.as_mut();
         let mut tmp = random_in_mult_group(&self.n, rand);
         tmp.pow_mod_mut(&self.n, &self.n2).unwrap();
         *cipher *= tmp;
         *cipher %= &self.n2;
     }
 
-    pub fn add_plain(&self, cipher: &mut Integer, plain: &Integer) {
-        let tmp = self.g.clone().pow_mod(plain, &self.n2).unwrap();
+    pub fn add_plain(&self, cipher: &mut Ciphertext, plain: &Plaintext) {
+        let cipher = cipher.as_mut();
+        let tmp = self.g.clone().pow_mod(plain.as_ref(), &self.n2).unwrap();
         *cipher *= tmp;
         *cipher %= &self.n2;
     }
 
-    pub fn add_encrypted(&self, cipher1: &mut Integer, cipher2: &Integer) {
-        *cipher1 *= cipher2;
-        *cipher1 %= &self.n2;
+    pub fn add_encrypted(&self, cipher1: &mut Ciphertext, cipher2: &Ciphertext) {
+        *cipher1.as_mut() *= cipher2.as_ref();
+        *cipher1.as_mut() %= &self.n2;
     }
 
-    pub fn mul_plain(&self, cipher: &mut Integer, plain: &Integer) {
-        cipher.pow_mod_mut(plain, &self.n2).unwrap();
+    pub fn mul_plain(&self, cipher: &mut Ciphertext, plain: &Plaintext) {
+        cipher
+            .as_mut()
+            .pow_mod_mut(plain.as_ref(), &self.n2)
+            .unwrap();
     }
 
-    pub fn share_combine(&self, shares: &[PartialDecryption]) -> Result<Integer> {
+    pub fn share_combine(&self, shares: &[PartialDecryption]) -> Result<Plaintext> {
         let mut cprime = Integer::from(1);
         for i in 0..self.w as usize {
             let mut lambda = self.delta.clone();
@@ -193,8 +189,8 @@ impl PublicKey {
             cprime %= &self.n2;
         }
         let t = (cprime - 1) / &self.n;
-        let rop = t * &self.combine_shares_constant % &self.n;
-        Ok(rop)
+        let rop: Integer = t * &self.combine_shares_constant % &self.n;
+        Ok(rop.into())
     }
 }
 
@@ -221,9 +217,9 @@ impl<'a> Polynomial<'a> {
 }
 
 impl PrivateKeyShare {
-    pub fn share_decrypt(&self, pk: &PublicKey, cipher: Integer) -> PartialDecryption {
+    pub fn share_decrypt(&self, pk: &PublicKey, cipher: Ciphertext) -> PartialDecryption {
         let exponent = self.si.clone() * &pk.delta * 2;
-        let share = cipher.pow_mod(&exponent, &pk.n2).unwrap();
+        let share = cipher.val.pow_mod(&exponent, &pk.n2).unwrap();
         PartialDecryption {
             val: share,
             id: self.i,
