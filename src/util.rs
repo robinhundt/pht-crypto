@@ -22,3 +22,67 @@ pub(crate) fn crt2(
     res %= t;
     res
 }
+
+/// This implements more efficient ser/de for rug::Integer. The standard implementation simply
+/// [uses to_string_radix](https://docs.rs/rug/1.12.0/src/rug/integer/serde.rs.html#26-38) while
+/// this uses the more efficient to/from_digits
+pub(crate) mod serde_integer {
+    use rug::integer::Order;
+    use rug::Integer;
+    use serde::de::Visitor;
+    use serde::{Deserializer, Serializer};
+    use std::fmt;
+
+    struct IVisitor;
+    impl<'de> Visitor<'de> for IVisitor {
+        type Value = Integer;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a sequence of bytes in least significant first, big-endian format")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Integer::from_digits(v, Order::LsfBe))
+        }
+    }
+
+    pub(crate) fn serialize<S>(i: &Integer, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes: Vec<u8> = i.to_digits(Order::LsfBe);
+        s.serialize_bytes(&bytes)
+    }
+
+    pub(crate) fn deserialize<'de, D>(d: D) -> Result<Integer, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        d.deserialize_bytes(IVisitor)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use rug::Integer;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+        struct Wrapper {
+            #[serde(with = "super")]
+            i: Integer,
+        }
+
+        #[test]
+        fn test_serde() {
+            let i = Wrapper {
+                i: Integer::from(42),
+            };
+            let ser = bincode::serialize(&i).unwrap();
+            let deser: Wrapper = bincode::deserialize(&ser).unwrap();
+            assert_eq!(i, deser)
+        }
+    }
+}

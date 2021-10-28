@@ -1,34 +1,34 @@
+use crate::rand::{generate_safe_prime, random_in_mult_group};
+use crate::util;
 use anyhow::{anyhow, Result};
 use rug::rand::MutRandState;
 use rug::{Assign, Complete, Integer};
 use serde::{Deserialize, Serialize};
 
-use crate::rand::{generate_safe_prime, random_in_mult_group};
-use crate::util;
-
-
 use std::convert::TryInto;
 use std::thread;
 
-
-pub struct Ciphertext<'a> {
-    pk: &'a PublicKey,
-    val: Integer,
-}
-
-pub struct Plaintext {
-    val: Integer
-}
+// WIP
+// pub struct Ciphertext<'a> {
+//     pk: &'a PublicKey,
+//     val: Integer,
+// }
+//
+// pub struct Plaintext {
+//     val: Integer,
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivateKeyShare {
     i: u32,
     /// Polynomial evaluation at i
+    #[serde(with = "crate::util::serde_integer")]
     si: Integer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialDecryption {
+    #[serde(with = "crate::util::serde_integer")]
     val: Integer,
     id: u32,
 }
@@ -40,29 +40,39 @@ pub struct PublicKey {
     /// The number of decryption servers in total
     l: u32,
     /// Modulus of the key. n = p * q
+    #[serde(with = "crate::util::serde_integer")]
     n: Integer,
     /// Precomputation: n + 1
+    #[serde(with = "crate::util::serde_integer")]
     g: Integer,
     /// Precomputation: n^2
+    #[serde(with = "crate::util::serde_integer")]
     n2: Integer,
     /// Precomputation: l!
+    #[serde(with = "crate::util::serde_integer")]
     delta: Integer,
     /// Precomputation (4*delta^2)^{-1} mod n
-    combine_shares_constant: Integer
+    #[serde(with = "crate::util::serde_integer")]
+    combine_shares_constant: Integer,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct PrivateKey {
     /// The number of servers req to decrypt
     w: u32,
     /// The number of decryption servers in total
     l: u32,
     /// d = 0 mod m and d = 1 mod n^2
+    #[serde(with = "crate::util::serde_integer")]
     d: Integer,
     /// Modulus of the key: p * q
+    #[serde(with = "crate::util::serde_integer")]
     n: Integer,
     /// Precomputation: n^2
+    #[serde(with = "crate::util::serde_integer")]
     n2: Integer,
     /// Precomputation: n * m
+    #[serde(with = "crate::util::serde_integer")]
     nm: Integer,
 }
 
@@ -107,7 +117,7 @@ pub fn generate_key_pair(
         g,
         n2: n2.clone(),
         delta,
-        combine_shares_constant
+        combine_shares_constant,
     };
 
     let sk = PrivateKey {
@@ -131,6 +141,8 @@ impl PrivateKeyShare {
 
 impl PublicKey {
     pub fn encrypt(&self, m: Integer, rand: &mut dyn MutRandState) -> Integer {
+        // TODO is random_in_mult_group needed? Other implementations just choose 0 < r < n
+        // https://crypto.stackexchange.com/questions/62371/paillier-encryption-problem-when-q-or-p-divides-r
         let mut r = random_in_mult_group(&self.n, rand);
         let mut rop = self.g.clone().pow_mod(&m, &self.n2).unwrap();
         r.pow_mod_mut(&self.n, &self.n2).unwrap();
@@ -166,8 +178,13 @@ impl PublicKey {
         for i in 0..self.w as usize {
             let mut lambda = self.delta.clone();
             for j in 0..self.w as usize {
-                if i == j { continue; }
-                assert_ne!(shares[i].id, shares[j].id, "`share_combine` must be passed unique shares");
+                if i == j {
+                    continue;
+                }
+                assert_ne!(
+                    shares[i].id, shares[j].id,
+                    "`share_combine` must be passed unique shares"
+                );
                 let v = Integer::from(shares[i].id as i64 - shares[j].id as i64);
                 lambda = lambda * Integer::from(-(shares[j].id as i64)) / v;
             }
@@ -207,7 +224,10 @@ impl PrivateKeyShare {
     pub fn share_decrypt(&self, pk: &PublicKey, cipher: Integer) -> PartialDecryption {
         let exponent = self.si.clone() * &pk.delta * 2;
         let share = cipher.pow_mod(&exponent, &pk.n2).unwrap();
-        PartialDecryption { val: share, id: self.i }
+        PartialDecryption {
+            val: share,
+            id: self.i,
+        }
     }
 }
 
@@ -216,9 +236,9 @@ mod tests {
     use crate::paillier::{generate_key_pair, Polynomial};
 
     use rug::rand::RandState;
-    
+
     use rand::seq::SliceRandom;
-    
+
     use rand::thread_rng;
 
     #[test]
@@ -263,7 +283,6 @@ mod tests {
         let combined = pk.share_combine(&shares).unwrap();
         assert_eq!(combined, 10);
     }
-
 
     #[test]
     fn test_multiple_server_lower_threshold() {

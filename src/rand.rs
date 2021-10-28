@@ -1,10 +1,10 @@
 use anyhow::Result;
 
+use openssl::bn::BigNum;
 use rug::integer::Order;
 use rug::rand::MutRandState;
 use rug::Complete;
 use rug::Integer;
-use openssl::bn::BigNum;
 
 pub(crate) fn generate_safe_prime(bits: usize) -> Result<(Integer, Integer)> {
     let mut sp = BigNum::new()?;
@@ -16,7 +16,7 @@ pub(crate) fn generate_safe_prime(bits: usize) -> Result<(Integer, Integer)> {
 }
 
 /// Generate a random value that is in Z_(op)^*. This simply random chooses
-/// values until we get one with gcd(rop, op) of n. If one has knowledge about
+/// values until we get one with gcd(rop, op) of 1. If one has knowledge about
 /// the value of rop, then calling this function may not be neccessary. i.e.
 /// if rop is prime, we can just call urandomm directly.
 pub(crate) fn random_in_mult_group(op: &Integer, rand: &mut dyn MutRandState) -> Integer {

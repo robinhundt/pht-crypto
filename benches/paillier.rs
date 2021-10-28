@@ -1,7 +1,5 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use pht_crypto::paillier::generate_key_pair;
-
-
 
 pub fn key_gen(c: &mut Criterion) {
     let mut group = c.benchmark_group("key_gen");

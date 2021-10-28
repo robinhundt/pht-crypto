@@ -9,7 +9,7 @@ This library is written as a learning exercise and for research purposes. Do **n
 - [ ] implement ergonomic Api on ciphertexts with implicit public key
 - [ ] better documentation
 - [ ] set up CI pipeline
-- [ ] misuse resistant `share_combine` function
+- [x] misuse resistant `share_combine` function
 - [ ] proper error handling (use `thiserror`)
 - [ ] make serde dependency optional
-
+- [x] better rug performance https://gitlab.com/tspiteri/rug/-/issues/8
