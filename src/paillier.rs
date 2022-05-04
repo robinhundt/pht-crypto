@@ -127,6 +127,15 @@ impl PrivateKeyShare {
         // i + 1 needed for zero indexed servers
         Self { i: i + 1, si }
     }
+
+    pub fn share_decrypt(&self, pk: &PublicKey, cipher: Ciphertext) -> PartialDecryption {
+        let exponent = self.si.clone() * &pk.delta * 2;
+        let share = cipher.val.pow_mod(&exponent, &pk.n2).unwrap();
+        PartialDecryption {
+            val: share,
+            id: self.i,
+        }
+    }
 }
 
 impl PublicKey {
@@ -194,6 +203,25 @@ impl PublicKey {
     }
 }
 
+impl PrivateKey {
+    pub fn share(
+        self,
+        server_indices: &[u32],
+        rand_state: &mut dyn MutRandState,
+    ) -> Vec<PrivateKeyShare> {
+        assert_eq!(
+            server_indices.len(),
+            self.w as usize,
+            "share() must be called with w unique indices"
+        );
+        let poly = Polynomial::new(&self, rand_state);
+        server_indices
+            .iter()
+            .map(|idx| poly.compute(*idx))
+            .collect()
+    }
+}
+
 impl<'a> Polynomial<'a> {
     pub fn new<'b>(sk: &'a PrivateKey, rand: &'b mut dyn MutRandState) -> Self {
         let mut coefficients = vec![sk.nm.clone(); sk.w as usize];
@@ -213,17 +241,6 @@ impl<'a> Polynomial<'a> {
             rop %= &self.sk.nm;
         }
         PrivateKeyShare::new(rop, x)
-    }
-}
-
-impl PrivateKeyShare {
-    pub fn share_decrypt(&self, pk: &PublicKey, cipher: Ciphertext) -> PartialDecryption {
-        let exponent = self.si.clone() * &pk.delta * 2;
-        let share = cipher.val.pow_mod(&exponent, &pk.n2).unwrap();
-        PartialDecryption {
-            val: share,
-            id: self.i,
-        }
     }
 }
 
@@ -253,8 +270,7 @@ mod tests {
         let (pk, sk) = generate_key_pair(128, 3, 3).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
-        let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(idx)).collect();
+        let key_shares = sk.share(&[0, 1, 2], &mut rand);
 
         let shares: Vec<_> = key_shares
             .iter()
@@ -269,8 +285,7 @@ mod tests {
         let (pk, sk) = generate_key_pair(128, 3, 3).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
-        let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..3).map(|idx| poly.compute(idx)).collect();
+        let key_shares = sk.share(&[0, 1, 2], &mut rand);
         let mut shares: Vec<_> = key_shares
             .iter()
             .map(|key_share| key_share.share_decrypt(&pk, c.clone()))
@@ -285,8 +300,7 @@ mod tests {
         let (pk, sk) = generate_key_pair(128, 3, 2).unwrap();
         let mut rand = RandState::new();
         let c = pk.encrypt(10.into(), &mut rand);
-        let poly = Polynomial::new(&sk, &mut rand);
-        let key_shares: Vec<_> = (0..2).map(|idx| poly.compute(idx)).collect();
+        let key_shares = sk.share(&[0, 2], &mut rand);
 
         let shares: Vec<_> = key_shares
             .iter()
