@@ -43,20 +43,20 @@ pub fn add_ciphertexts(c: &mut Criterion) {
 
 pub fn share_decrypt(c: &mut Criterion) {
     let mut group = c.benchmark_group("share_decrypt");
-    let (pk, sk) = generate_key_pair(2048, 10, 10).unwrap();
+    let (pk, sk) = generate_key_pair(2048, 200, 200).unwrap();
     let mut rand = RandState::new();
-    let sk_shares = sk.share(&(0..10).collect::<Vec<_>>(), &mut rand);
-    let cipher = pk.encrypt(42.into(), &mut rand);
+    let sk_shares = sk.share(&(0..200).collect::<Vec<_>>(), &mut rand);
+    let cipher = pk.encrypt(0.into(), &mut rand);
     group.bench_function("2048 bits", |b| {
         b.iter(|| {
             sk_shares[0].share_decrypt(&pk, cipher.clone());
         })
     });
 
-    let (pk, sk) = generate_key_pair(3072, 10, 10).unwrap();
+    let (pk, sk) = generate_key_pair(3072, 200, 200).unwrap();
     let mut rand = RandState::new();
-    let sk_shares = sk.share(&(0..10).collect::<Vec<_>>(), &mut rand);
-    let cipher = pk.encrypt(42.into(), &mut rand);
+    let sk_shares = sk.share(&(0..200).collect::<Vec<_>>(), &mut rand);
+    let cipher = pk.encrypt(0.into(), &mut rand);
     group.bench_function("3072 bits", |b| {
         b.iter(|| {
             sk_shares[0].share_decrypt(&pk, cipher.clone());
@@ -65,11 +65,11 @@ pub fn share_decrypt(c: &mut Criterion) {
 }
 
 pub fn combine_shares(c: &mut Criterion) {
-    let mut group = c.benchmark_group("combine_share");
+    let mut group = c.benchmark_group("combine_shares");
     let mut rand = RandState::new();
 
-    let (pk, sk) = generate_key_pair(2048, 10, 10).unwrap();
-    let sk_shares = sk.share(&(0..10).collect::<Vec<_>>(), &mut rand);
+    let (pk, sk) = generate_key_pair(2048, 200, 200).unwrap();
+    let sk_shares = sk.share(&(0..200).collect::<Vec<_>>(), &mut rand);
     let cipher = pk.encrypt(42.into(), &mut rand);
     let partial_decs: Vec<_> = sk_shares
         .iter()
@@ -81,8 +81,8 @@ pub fn combine_shares(c: &mut Criterion) {
         })
     });
 
-    let (pk, sk) = generate_key_pair(2048, 10, 10).unwrap();
-    let sk_shares = sk.share(&(0..10).collect::<Vec<_>>(), &mut rand);
+    let (pk, sk) = generate_key_pair(3072, 200, 200).unwrap();
+    let sk_shares = sk.share(&(0..200).collect::<Vec<_>>(), &mut rand);
     let cipher = pk.encrypt(42.into(), &mut rand);
     let partial_decs: Vec<_> = sk_shares
         .iter()

@@ -5,6 +5,7 @@ use rug::rand::MutRandState;
 use rug::{Assign, Complete, Integer};
 use serde::{Deserialize, Serialize};
 
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::convert::TryInto;
 use std::thread;
 
@@ -179,24 +180,24 @@ impl PublicKey {
     }
 
     pub fn share_combine(&self, shares: &[PartialDecryption]) -> Result<Plaintext> {
-        let mut cprime = Integer::from(1);
-        for i in 0..self.w as usize {
-            let mut lambda = self.delta.clone();
-            for j in 0..self.w as usize {
-                if i == j {
-                    continue;
+        let cprime: Integer = shares
+            .par_iter()
+            .enumerate()
+            .map(|(i, si)| {
+                let mut lambda = self.delta.clone();
+                for (j, sj) in shares.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    assert_ne!(si.id, sj.id, "`share_combine` must be passed unique shares");
+                    let v = si.id as i64 - sj.id as i64;
+                    lambda *= -(sj.id as i64);
+                    lambda /= v;
                 }
-                assert_ne!(
-                    shares[i].id, shares[j].id,
-                    "`share_combine` must be passed unique shares"
-                );
-                let v = Integer::from(shares[i].id as i64 - shares[j].id as i64);
-                lambda = lambda * Integer::from(-(shares[j].id as i64)) / v;
-            }
-            let lambda2 = lambda.clone() * 2;
-            cprime *= shares[i].val.clone().pow_mod(&lambda2, &self.n2).unwrap();
-            cprime %= &self.n2;
-        }
+                let lambda2 = lambda * 2;
+                si.val.clone().pow_mod(&lambda2, &self.n2).unwrap()
+            })
+            .reduce(|| Integer::from(1), |a, b| (a * b) % &self.n2);
         let t = (cprime - 1) / &self.n;
         let rop: Integer = t * &self.combine_shares_constant % &self.n;
         Ok(rop.into())
@@ -216,7 +217,7 @@ impl PrivateKey {
         );
         let poly = Polynomial::new(&self, rand_state);
         server_indices
-            .iter()
+            .par_iter()
             .map(|idx| poly.compute(*idx))
             .collect()
     }
